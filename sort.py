@@ -77,10 +77,11 @@ class KalmanBoxTracker(object):
   This class represents the internel state of individual tracked objects observed as bbox.
   """
   count = 0
-  def __init__(self,bbox):
+  def __init__(self,bbox,class_=None):
     """
     Initialises a tracker using initial bounding box.
     """
+    self.class_ = class_
     #define constant velocity model
     self.kf = KalmanFilter(dim_x=7, dim_z=4)
     self.kf.F = np.array([[1,0,0,0,1,0,0],[0,1,0,0,0,1,0],[0,0,1,0,0,0,1],[0,0,0,1,0,0,0],  [0,0,0,0,1,0,0],[0,0,0,0,0,1,0],[0,0,0,0,0,0,1]])
@@ -131,13 +132,13 @@ class KalmanBoxTracker(object):
     """
     return convert_x_to_bbox(self.kf.x)
 
-def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
+def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.2):
   """
   Assigns detections to tracked object (both represented as bounding boxes)
 
   Returns 3 lists of matches, unmatched_detections and unmatched_trackers
   """
-  if(len(trackers)==0):
+  if(len(trackers)==0) or (len(detections)==0):
     return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
   iou_matrix = np.zeros((len(detections),len(trackers)),dtype=np.float32)
 
@@ -182,10 +183,10 @@ class Sort(object):
     self.trackers = []
     self.frame_count = 0
 
-  def update(self,dets):
+  def update(self,dets, classes=None):
     """
     Params:
-      dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
+      dets - a numpy array of detections in the format [[x,y,w,h,score],[x,y,w,h,score],...]
     Requires: this method must be called once for each frame even with empty detections.
     Returns the a similar array, where the last column is the object ID.
 
@@ -214,13 +215,14 @@ class Sort(object):
 
     #create and initialise new trackers for unmatched detections
     for i in unmatched_dets:
-        trk = KalmanBoxTracker(dets[i,:]) 
+        # !!! ADDED CLASS
+        trk = KalmanBoxTracker(dets[i,:], classes[i])
         self.trackers.append(trk)
     i = len(self.trackers)
     for trk in reversed(self.trackers):
         d = trk.get_state()[0]
         if((trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits)):
-          ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
+          ret.append(np.concatenate((d,[trk.id+1], [trk.class_])).reshape(1,-1)) # +1 as MOT benchmark requires positive
         i -= 1
         #remove dead tracklet
         if(trk.time_since_update > self.max_age):
@@ -228,7 +230,7 @@ class Sort(object):
     if(len(ret)>0):
       return np.concatenate(ret)
     return np.empty((0,5))
-    
+
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='SORT demo')
@@ -250,11 +252,11 @@ if __name__ == '__main__':
       print('\n\tERROR: mot_benchmark link not found!\n\n    Create a symbolic link to the MOT benchmark\n    (https://motchallenge.net/data/2D_MOT_2015/#download). E.g.:\n\n    $ ln -s /path/to/MOT2015_challenge/2DMOT2015 mot_benchmark\n\n')
       exit()
     plt.ion()
-    fig = plt.figure() 
-  
+    fig = plt.figure()
+
   if not os.path.exists('output'):
     os.makedirs('output')
-  
+
   for seq in sequences:
     mot_tracker = Sort() #create instance of the SORT tracker
     seq_dets = np.loadtxt('data/%s/det.txt'%(seq),delimiter=',') #load detections
@@ -293,6 +295,3 @@ if __name__ == '__main__':
   print("Total Tracking took: %.3f for %d frames or %.1f FPS"%(total_time,total_frames,total_frames/total_time))
   if(display):
     print("Note: to get real runtime results run without the option: --display")
-  
-
-
